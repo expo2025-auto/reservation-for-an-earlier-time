@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
-// @version      2025-09-24.3
+// @version      2025-09-24.4
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
@@ -44,6 +44,23 @@
   const ENABLE_KEY = 'expo_adv_enable_v2';
   let enabledFallback = false;
 
+  const LOG_MAX_LINES = 5;
+  const logBuffer = [];
+  let logPanel;
+
+  const SLOT_SCOPE_SELECTORS = [
+    '[role="tabpanel"]',
+    '[data-date]',
+    '[data-day]',
+    '[data-tab-id]',
+    '[data-date-value]',
+    'tbody',
+    'table',
+  ];
+  const SLOT_SCOPE_ATTRIBUTE_KEYS = ['data-date-value', 'data-date', 'data-day', 'data-tab-id'];
+
+  let lastLoggedCurrentSlotSignature = null;
+
   /***** 便利ユーティリティ *****/
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -65,7 +82,7 @@
 
   function log(...args) {
     console.log('[ExpoAdvance]', ...args);
-    appendLogPanel(args.map(String).join(' '));
+    addLogEntry(args.map((arg) => String(arg)).join(' '));
   }
 
   // :matches() 疑似を簡易サポート（innerTextでフィルタ）
@@ -147,10 +164,16 @@
     return { allowed: true, now };
   }
 
-  function resetAttemptCounter() {
-    sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+  function resetAttemptInfo(message = '') {
+    try {
+      sessionStorage.removeItem(ATTEMPT_STORAGE_KEY);
+    } catch {
+      // storage unavailable
+    }
     attemptBlockedUntil = 0;
-    log('変更試行回数の記録をリセットしました');
+    if (message) {
+      log(message);
+    }
   }
 
   /***** サーバー時刻取得（Dateヘッダ） *****/
@@ -279,22 +302,50 @@
 
   function scopeButtonsToCurrentDay(allButtons, currentButton) {
     if (!currentButton) return allButtons;
-    const scopeSelectors = [
-      '[role="tabpanel"]',
-      '[data-date]',
-      '[data-day]',
-      '[data-tab-id]',
-      '[data-date-value]',
-      'tbody',
-      'table',
-    ];
-    for (const sel of scopeSelectors) {
+    for (const sel of SLOT_SCOPE_SELECTORS) {
       const scopeEl = currentButton.closest(sel);
       if (!scopeEl) continue;
       const scoped = allButtons.filter(btn => scopeEl.contains(btn));
       if (scoped.length) return scoped;
     }
     return allButtons;
+  }
+
+  function getSlotScopeSignature(button) {
+    if (!button) return '';
+    for (const attr of SLOT_SCOPE_ATTRIBUTE_KEYS) {
+      const scopeEl = button.closest(`[${attr}]`);
+      if (scopeEl) {
+        const value = scopeEl.getAttribute(attr);
+        if (value) return `${attr}:${value}`;
+      }
+    }
+    return '';
+  }
+
+  function describeSlotScope(button) {
+    if (!button) return '';
+    for (const attr of SLOT_SCOPE_ATTRIBUTE_KEYS) {
+      const scopeEl = button.closest(`[${attr}]`);
+      if (scopeEl) {
+        const value = scopeEl.getAttribute(attr);
+        if (value) return value;
+      }
+    }
+    const table = button.closest('table');
+    if (table) {
+      const caption = table.querySelector('caption');
+      if (caption && caption.textContent) {
+        const text = caption.textContent.trim();
+        if (text) return text;
+      }
+      const th = table.querySelector('thead th');
+      if (th && th.textContent) {
+        const text = th.textContent.trim();
+        if (text) return text;
+      }
+    }
+    return '';
   }
 
   async function tryReservationChangeOnPrevSlot() {
@@ -328,24 +379,18 @@
       log(...messages);
       return 'error';
     }
-    const scopeSelectors = [
-      '[role="tabpanel"]',
-      '[data-date]',
-      '[data-day]',
-      '[data-tab-id]',
-      '[data-date-value]',
-      'tbody',
-      'table',
-    ];
-    const scopedButtons = buttons.filter(btn =>
-      scopeSelectors.every(sel => {
-        const scopeEl = currentButton.closest(sel);
-        if (!scopeEl) return true;
-        return btn.closest(sel) === scopeEl;
-      })
-    );
+    const scopeSignature = getSlotScopeSignature(currentButton);
+    const scopeLabel = describeSlotScope(currentButton);
+    const buttonText = (currentButton.innerText || currentButton.textContent || '').trim();
+    const currentDisplayLabel = buttonText ? buttonText.split(/\s+/)[0] : currentInfo.label;
+    const currentSignature = `${scopeSignature}|${currentDisplayLabel}`;
+    if (lastLoggedCurrentSlotSignature !== currentSignature) {
+      lastLoggedCurrentSlotSignature = currentSignature;
+      const scopeMessage = scopeLabel ? `（${scopeLabel}）` : '';
+      log(`現在の予約枠: ${currentDisplayLabel}${scopeMessage}`);
+    }
 
-    const candidateButtons = scopedButtons.length ? scopedButtons : buttons;
+    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentButton);
 
     const candidates = candidateButtons
       .map(btn => {
@@ -433,9 +478,11 @@
       const sec = now.getSeconds();
       const bucket = Math.floor(nowMs / 60_000);
 
+      const hadBucket = typeof reloadInfo.bucket === 'number';
       if (reloadInfo.bucket !== bucket) {
         reloadInfo = resetReloadInfo(bucket);
         reloadsThisMinute = 0;
+        resetAttemptInfo(hadBucket ? '分が変わったため、予約変更試行回数の記録をリセットしました' : '');
       } else {
         reloadsThisMinute = reloadInfo.count || 0;
         if (!('loggedMinute' in reloadInfo)) {
@@ -509,31 +556,35 @@
       updateToggleLabel();
     };
 
-    const limitBtn = document.createElement('button');
-    limitBtn.textContent = '回数リセット';
-    Object.assign(limitBtn.style, { padding: '4px 8px', cursor: 'pointer' });
-    limitBtn.title = 'この分の変更試行回数の記録をリセットします';
-    limitBtn.onclick = resetAttemptCounter;
-
     const logBtn = document.createElement('button');
     logBtn.textContent = 'ログ';
     Object.assign(logBtn.style, { padding: '4px 8px', cursor: 'pointer' });
     logBtn.onclick = toggleLogPanel;
 
-    wrap.append(btn, limitBtn, logBtn);
+    wrap.append(btn, logBtn);
     document.documentElement.appendChild(wrap);
   }
 
-  let logPanel;
-  function appendLogPanel(text) {
-    if (!logPanel) return;
-    const line = document.createElement('div');
-    line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-    logPanel.appendChild(line);
-    while (logPanel.childElementCount > 5) {
-      logPanel.firstChild.remove();
+  function addLogEntry(text) {
+    logBuffer.push({ time: new Date(), text });
+    while (logBuffer.length > LOG_MAX_LINES) {
+      logBuffer.shift();
+    }
+    if (logPanel) {
+      renderLogPanel();
     }
   }
+
+  function renderLogPanel() {
+    if (!logPanel) return;
+    logPanel.innerHTML = '';
+    for (const entry of logBuffer) {
+      const line = document.createElement('div');
+      line.textContent = `[${entry.time.toLocaleTimeString()}] ${entry.text}`;
+      logPanel.appendChild(line);
+    }
+  }
+
   function toggleLogPanel() {
     if (!logPanel) {
       logPanel = document.createElement('div');
@@ -544,7 +595,7 @@
         boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
       });
       document.documentElement.appendChild(logPanel);
-      appendLogPanel('ログ開始');
+      renderLogPanel();
     } else {
       logPanel.remove();
       logPanel = null;
