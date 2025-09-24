@@ -2,9 +2,9 @@
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
 // @version      2025-09-24.1
-// @description  サーバー時刻で各分43〜53秒の間に最大4回自動リロード。現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
-// @downloadURL  https://raw.githubusercontent.com/expo-automation/reservation-for-an-earlier-time/main/earlier-time.user.js
-// @updateURL    https://raw.githubusercontent.com/expo-automation/reservation-for-an-earlier-time/main/earlier-time.user.js
+// @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
+// @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
+// @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @author       you
 // @match        https://ticket.expo2025.or.jp/*
 // @run-at       document-idle
