@@ -585,26 +585,37 @@
     }
   }
 
+  function openLogPanel() {
+    if (logPanel) return;
+    logPanel = document.createElement('div');
+    Object.assign(logPanel.style, {
+      position: 'fixed', top: '60px', left: '10px', zIndex: 999999,
+      width: '360px', maxHeight: '45vh', overflow: 'auto', background: '#fff',
+      border: '1px solid #999', borderRadius: '10px', padding: '8px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
+    });
+    document.documentElement.appendChild(logPanel);
+    renderLogPanel();
+  }
+
+  function closeLogPanel() {
+    if (!logPanel) return;
+    logPanel.remove();
+    logPanel = null;
+  }
+
   function toggleLogPanel() {
-    if (!logPanel) {
-      logPanel = document.createElement('div');
-      Object.assign(logPanel.style, {
-        position: 'fixed', top: '60px', left: '10px', zIndex: 999999,
-        width: '360px', maxHeight: '45vh', overflow: 'auto', background: '#fff',
-        border: '1px solid #999', borderRadius: '10px', padding: '8px',
-        boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
-      });
-      document.documentElement.appendChild(logPanel);
-      renderLogPanel();
+    if (logPanel) {
+      closeLogPanel();
     } else {
-      logPanel.remove();
-      logPanel = null;
+      openLogPanel();
     }
   }
 
   /***** メインループ *****/
   function main() {
     ensureToggle();
+    openLogPanel();
     log('スクリプト起動');
     setInterval(async () => {
       if (!isEnabled()) return;
