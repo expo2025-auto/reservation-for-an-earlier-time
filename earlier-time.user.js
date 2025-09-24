@@ -38,6 +38,7 @@
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）
   const MAX_ATTEMPTS_PER_MINUTE = 3;
   const ATTEMPT_STORAGE_KEY = 'expo_adv_attempt_info_v3';
+  const RELOAD_STORAGE_KEY = 'expo_adv_reload_info_v1';
 
   // トグル保存キー
   const ENABLE_KEY = 'expo_adv_enable_v2';
@@ -92,6 +93,28 @@
     } catch {
       // storage full or unavailable
     }
+  }
+
+  function loadReloadInfo() {
+    try {
+      return JSON.parse(sessionStorage.getItem(RELOAD_STORAGE_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  function saveReloadInfo(info) {
+    try {
+      sessionStorage.setItem(RELOAD_STORAGE_KEY, JSON.stringify(info));
+    } catch {
+      // storage full or unavailable
+    }
+  }
+
+  function resetReloadInfo(bucket) {
+    const info = { bucket, count: 0, loggedMinute: null };
+    saveReloadInfo(info);
+    return info;
   }
 
   async function registerAttempt() {
@@ -163,12 +186,12 @@
   }
 
   /***** リロード制御（サーバー時刻ベース） *****/
-  let lastMinute = null;
   let reloadsThisMinute = 0;
   let ticking = false;
   let stopped = false;
   let pendingReload = false;
   let attemptBlockedUntil = 0;
+  let reloadInfo = loadReloadInfo();
 
   // 予約変更フロー：直前枠が空いていたら実行
   function extractSlotInfo(el) {
@@ -268,8 +291,24 @@
       log('現在の予約時間を取得できませんでした');
       return 'error';
     }
+    const scopeSelectors = [
+      '[role="tabpanel"]',
+      '[data-date]',
+      '[data-day]',
+      '[data-tab-id]',
+      '[data-date-value]',
+      'tbody',
+      'table',
+    ];
+    const scopedButtons = buttons.filter(btn =>
+      scopeSelectors.every(sel => {
+        const scopeEl = currentButton.closest(sel);
+        if (!scopeEl) return true;
+        return btn.closest(sel) === scopeEl;
+      })
+    );
 
-    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentButton);
+    const candidateButtons = scopedButtons.length ? scopedButtons : buttons;
 
     const candidates = candidateButtons
       .map(btn => {
@@ -354,18 +393,31 @@
       }
 
       const now = await getServerDate().catch(() => new Date());
+      const nowMs = now.getTime();
       const sec = now.getSeconds();
-      const min = now.getMinutes();
+      const bucket = Math.floor(nowMs / 60_000);
 
-      if (lastMinute !== min) {
-        lastMinute = min;
+      if (reloadInfo.bucket !== bucket) {
+        reloadInfo = resetReloadInfo(bucket);
         reloadsThisMinute = 0;
-        log(`分が変わりました → ${now.toLocaleTimeString()} / この分のリロード残り: ${MAX_RELOADS_PER_MINUTE}`);
+      } else {
+        reloadsThisMinute = reloadInfo.count || 0;
+        if (!('loggedMinute' in reloadInfo)) {
+          reloadInfo.loggedMinute = null;
+        }
+      }
+
+      if (reloadInfo.loggedMinute !== bucket) {
+        log(`分が変わりました → ${now.toLocaleTimeString()} / この分のリロード残り: ${Math.max(0, MAX_RELOADS_PER_MINUTE - reloadsThisMinute)}`);
+        reloadInfo.loggedMinute = bucket;
+        saveReloadInfo(reloadInfo);
       }
 
       const inWindow = sec >= WINDOW_START && sec < WINDOW_END;
       if (inWindow && reloadsThisMinute < MAX_RELOADS_PER_MINUTE) {
         reloadsThisMinute++;
+        reloadInfo.count = reloadsThisMinute;
+        saveReloadInfo(reloadInfo);
         pendingReload = true;
         reloadPage(`サーバー時刻 ${sec}s（分内 ${reloadsThisMinute}/${MAX_RELOADS_PER_MINUTE}）`);
         return;
@@ -412,9 +464,14 @@
 
     const btn = document.createElement('button');
     Object.assign(btn.style, { padding: '4px 8px', cursor: 'pointer' });
-    const label = () => btn.textContent = isEnabled() ? '自動：ON' : '自動：OFF';
-    label();
-    btn.onclick = () => { setEnabled(!isEnabled()); label(); };
+    function updateToggleLabel() {
+      btn.textContent = isEnabled() ? '自動：ON' : '自動：OFF';
+    }
+    updateToggleLabel();
+    btn.onclick = () => {
+      setEnabled(!isEnabled());
+      updateToggleLabel();
+    };
 
     const limitBtn = document.createElement('button');
     limitBtn.textContent = '回数リセット';
@@ -437,7 +494,7 @@
     const line = document.createElement('div');
     line.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
     logPanel.appendChild(line);
-    if (logPanel.childElementCount > 200) {
+    while (logPanel.childElementCount > 5) {
       logPanel.firstChild.remove();
     }
   }
