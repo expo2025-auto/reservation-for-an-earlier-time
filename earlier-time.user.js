@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
-// @version      2025-09-24.1
+// @version      2025-09-24.3
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
@@ -17,8 +17,8 @@
 
   /***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
-    timeButton: 'div[role="button"][class*="style_main__button__"], div[role="button"][aria-pressed]',
-    activeButton: 'div[role="button"][aria-pressed="true"]',
+    timeButton: 'td button, td [role="button"], [data-time-slot] button, [data-time-slot] [role="button"], div[role="button"][class*="style_main__button__"], button[class*="style_main__button__"], div[role="button"][aria-pressed]',
+    activeButton: '[aria-pressed="true"]',
     timePattern: /([01]?\d|2[0-3]):[0-5]\d/,
     setVisitButtonText: /来場日時を設定する/,
     confirmButtonText: /来場日時を変更する/,
@@ -41,10 +41,25 @@
 
   // トグル保存キー
   const ENABLE_KEY = 'expo_adv_enable_v2';
+  let enabledFallback = false;
 
   /***** 便利ユーティリティ *****/
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  function collectSlotButtons(root = document) {
+    const nodes = $$(SELECTORS.timeButton, root);
+    if (!nodes.length) return [];
+    const seen = new Set();
+    const buttons = [];
+    for (const node of nodes) {
+      const btn = node.closest('button, [role="button"]');
+      if (!btn || seen.has(btn)) continue;
+      seen.add(btn);
+      buttons.push(btn);
+    }
+    return buttons;
+  }
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   function log(...args) {
@@ -215,14 +230,34 @@
     setTimeout(() => reloadPage(reason || '自動リロード'), delay);
   }
 
+  function scopeButtonsToCurrentDay(allButtons, currentButton) {
+    if (!currentButton) return allButtons;
+    const scopeSelectors = [
+      '[role="tabpanel"]',
+      '[data-date]',
+      '[data-day]',
+      '[data-tab-id]',
+      '[data-date-value]',
+      'tbody',
+      'table',
+    ];
+    for (const sel of scopeSelectors) {
+      const scopeEl = currentButton.closest(sel);
+      if (!scopeEl) continue;
+      const scoped = allButtons.filter(btn => scopeEl.contains(btn));
+      if (scoped.length) return scoped;
+    }
+    return allButtons;
+  }
+
   async function tryReservationChangeOnPrevSlot() {
-    const buttons = $$(SELECTORS.timeButton);
+    const buttons = collectSlotButtons();
     if (!buttons.length) {
       log('時間選択ボタンが見つかりませんでした');
       return 'no-slot';
     }
 
-    const currentButton = buttons.find(btn => btn.matches(SELECTORS.activeButton));
+    const currentButton = buttons.find(btn => btn.matches(SELECTORS.activeButton) || btn.getAttribute('aria-pressed') === 'true');
     if (!currentButton) {
       log('現在の予約枠を特定できませんでした');
       return 'no-slot';
@@ -234,7 +269,9 @@
       return 'error';
     }
 
-    const candidates = buttons
+    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentButton);
+
+    const candidates = candidateButtons
       .map(btn => {
         const info = extractSlotInfo(btn);
         if (!info) return null;
@@ -344,11 +381,22 @@
 
   /***** UI：トグル＆ログ *****/
   function isEnabled() {
-    const v = localStorage.getItem(ENABLE_KEY);
-    return v === null ? true : v === '1';
+    try {
+      const v = sessionStorage.getItem(ENABLE_KEY);
+      if (v === null) return enabledFallback;
+      enabledFallback = v === '1';
+      return enabledFallback;
+    } catch {
+      return enabledFallback;
+    }
   }
   function setEnabled(flag) {
-    localStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
+    enabledFallback = flag;
+    try {
+      sessionStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
+    } catch {
+      // storage unavailable
+    }
   }
 
   function ensureToggle() {
