@@ -18,7 +18,18 @@
   /***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
     timeButton: 'td button, td [role="button"], [data-time-slot] button, [data-time-slot] [role="button"], div[role="button"][class*="style_main__button__"], button[class*="style_main__button__"], div[role="button"][aria-pressed]',
-    activeButton: '[aria-pressed="true"]',
+    activeButton: [
+      '[aria-pressed="true"]',
+      '[aria-selected="true"]',
+      '[aria-current]:not([aria-current="false"])',
+      '[aria-checked="true"]',
+      '[data-current="true"]',
+      '[data-active="true"]',
+      '[data-selected="true"]',
+      '[data-is-current="true"]',
+      '[data-is-active="true"]',
+      '[data-is-selected="true"]',
+    ].join(', '),
     timePattern: /([01]?\d|2[0-3]):[0-5]\d/,
     setVisitButtonText: /来場日時を設定する/,
     confirmButtonText: /来場日時を変更する/,
@@ -60,6 +71,205 @@
   const SLOT_SCOPE_ATTRIBUTE_KEYS = ['data-date-value', 'data-date', 'data-day', 'data-tab-id'];
 
   let lastLoggedCurrentSlotSignature = null;
+  let lastLoggedUsedStoredForCurrent = false;
+  let lastKnownCurrentSlot = null;
+  let lastActiveDetectionFailureLogTime = 0;
+
+  const ACTIVE_TEXT_PATTERNS = [
+    /現在.*予約/,
+    /予約.*中/,
+    /予約.*済/,
+    /ご予約中/,
+    /ご予約済/,
+    /選択.*中/,
+    /選択.*済/,
+    /reserved/i,
+    /currentreservation/i,
+    /yourreservation/i,
+    /booked/i,
+  ];
+
+  const ACTIVE_KEYWORD_REGEXPS = [
+    /(?:^|[^a-z0-9])current(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])selected(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])active(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])checked(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])chosen(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])reserved(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])booked(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])mine(?:[^a-z0-9]|$)/i,
+    /(?:^|[^a-z0-9])own(?:[^a-z0-9]|$)/i,
+  ];
+
+  function textMatchesActive(text) {
+    if (!text) return false;
+    const normalized = String(text).replace(/\s+/g, '');
+    if (!normalized) return false;
+    return ACTIVE_TEXT_PATTERNS.some((re) => re.test(normalized));
+  }
+
+  function containsActiveKeyword(str) {
+    if (!str) return false;
+    const lower = String(str).toLowerCase();
+    if (lower.includes('inactive')) return false;
+    return ACTIVE_KEYWORD_REGEXPS.some((re) => re.test(lower));
+  }
+
+  function collectActiveHintsFromSelf(el) {
+    const hints = [];
+    if (!el) return hints;
+    try {
+      if (SELECTORS.activeButton && el.matches(SELECTORS.activeButton)) {
+        hints.push('selector-match');
+      }
+    } catch (e) {
+      // invalid selector situations are ignored
+    }
+    const ariaAttrs = ['aria-pressed', 'aria-selected', 'aria-current', 'aria-checked'];
+    for (const name of ariaAttrs) {
+      const value = el.getAttribute(name);
+      if (value && value !== 'false') {
+        hints.push(`${name}=${value}`);
+      }
+    }
+    const dataset = el.dataset || {};
+    for (const [key, value] of Object.entries(dataset)) {
+      const valStr = value == null ? '' : String(value);
+      if (containsActiveKeyword(key) || containsActiveKeyword(valStr) || (valStr === '1' && containsActiveKeyword(key))) {
+        hints.push(`data-${key}=${valStr}`);
+      } else if (textMatchesActive(valStr)) {
+        hints.push(`data-${key}~text`);
+      }
+    }
+    const attributes = Array.from(el.attributes || []);
+    for (const attr of attributes) {
+      const name = attr.name;
+      if (!name || name.startsWith('data-') || name.startsWith('aria-') || name === 'class') continue;
+      const value = attr.value;
+      if (containsActiveKeyword(name) || containsActiveKeyword(value)) {
+        hints.push(`${name}=${value}`);
+      } else if (textMatchesActive(value)) {
+        hints.push(`${name}~text`);
+      }
+    }
+    const classes = el.classList ? Array.from(el.classList) : (typeof el.className === 'string' ? el.className.split(/\s+/) : []);
+    for (const cls of classes) {
+      if (!cls) continue;
+      if (containsActiveKeyword(cls)) {
+        hints.push(`class:${cls}`);
+      } else if (textMatchesActive(cls)) {
+        hints.push(`class~text:${cls}`);
+      }
+    }
+    const labelText = [el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ').trim();
+    if (labelText && textMatchesActive(labelText)) {
+      hints.push(`label:${labelText}`);
+    }
+    const elementText = (el.innerText || el.textContent || '').trim();
+    if (elementText && textMatchesActive(elementText)) {
+      hints.push(`text:${elementText}`);
+    }
+    const altNodes = el.querySelectorAll ? el.querySelectorAll('[alt]') : [];
+    for (const node of altNodes) {
+      const alt = node.getAttribute('alt') || '';
+      if (alt && textMatchesActive(alt)) {
+        hints.push(`alt:${alt}`);
+        break;
+      }
+    }
+    return hints;
+  }
+
+  function collectActiveHints(el) {
+    const hints = collectActiveHintsFromSelf(el);
+    let depth = 0;
+    let parent = el ? el.parentElement : null;
+    while (parent && depth < 4) {
+      const parentHints = collectActiveHintsFromSelf(parent);
+      if (parentHints.length) {
+        for (const hint of parentHints) {
+          hints.push(`ancestor${depth + 1}:${hint}`);
+        }
+        break;
+      }
+      const parentText = (parent.innerText || parent.textContent || '').trim();
+      if (parentText && textMatchesActive(parentText)) {
+        hints.push(`ancestor${depth + 1}-text:${parentText}`);
+        break;
+      }
+      parent = parent.parentElement;
+      depth += 1;
+    }
+    return hints;
+  }
+
+  function scoreActiveHints(hints) {
+    if (!hints || !hints.length) return 0;
+    let score = 0;
+    for (const rawHint of hints) {
+      let hint = rawHint;
+      if (rawHint.startsWith('ancestor')) {
+        score += 15;
+        const idx = rawHint.indexOf(':');
+        hint = idx >= 0 ? rawHint.slice(idx + 1) : rawHint;
+      }
+      if (hint === 'selector-match') {
+        score += 100;
+      } else if (/aria-pressed/.test(hint)) {
+        score += 90;
+      } else if (/aria-selected/.test(hint)) {
+        score += 85;
+      } else if (/aria-current/.test(hint)) {
+        score += 80;
+      } else if (/aria-checked/.test(hint)) {
+        score += 75;
+      } else if (/data-/.test(hint)) {
+        score += 60;
+      } else if (/class/.test(hint)) {
+        score += 45;
+      } else if (/label/.test(hint) || /text/.test(hint) || /alt/.test(hint)) {
+        score += 40;
+      } else {
+        score += 10;
+      }
+    }
+    return score;
+  }
+
+  function normalizeLabel(str) {
+    return (str || '').replace(/\s+/g, '').trim();
+  }
+
+  function findEntryByStoredSignature(entries, stored) {
+    if (!stored) return null;
+    const scored = [];
+    for (const entry of entries) {
+      const info = entry.info;
+      let score = 0;
+      if (stored.scopeSignature && stored.scopeSignature === (entry.scopeSignature || '')) {
+        score += 8;
+      }
+      if (stored.minutes != null && info && info.minutes === stored.minutes) {
+        score += 4;
+      }
+      if (stored.label && info && normalizeLabel(info.label) === normalizeLabel(stored.label)) {
+        score += 2;
+      }
+      if (stored.text && normalizeLabel(entry.text) === normalizeLabel(stored.text)) {
+        score += 1;
+      }
+      if (!score) continue;
+      scored.push({ entry, score });
+    }
+    if (!scored.length) return null;
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored[0];
+    const runnerUp = scored[1];
+    const threshold = stored.scopeSignature ? 8 : (stored.minutes != null ? 4 : 2);
+    if (top.score < threshold) return null;
+    if (runnerUp && runnerUp.score === top.score) return null;
+    return top.entry;
+  }
 
   /***** 便利ユーティリティ *****/
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -255,8 +465,10 @@
     };
   }
 
-  function isSelectableSlot(el) {
+  function isSelectableSlot(el, precomputedActiveHints = null) {
     if (!el) return false;
+    const activeHints = precomputedActiveHints == null ? collectActiveHints(el) : precomputedActiveHints;
+    if (activeHints.length) return false;
     if (el.getAttribute('aria-pressed') === 'true') return false;
     if (el.getAttribute('data-disabled') === 'true') return false;
     const ariaDisabled = el.getAttribute('aria-disabled');
@@ -355,51 +567,149 @@
       return 'no-slot';
     }
 
-    const currentButton = buttons.find(btn => btn.matches(SELECTORS.activeButton) || btn.getAttribute('aria-pressed') === 'true');
-    if (!currentButton) {
-      log('現在の予約枠を特定できませんでした');
+    const entries = buttons.map((btn) => {
+      const info = extractSlotInfo(btn);
+      const hints = collectActiveHints(btn);
+      const text = (btn.innerText || btn.textContent || '').trim();
+      const scopeSignature = getSlotScopeSignature(btn);
+      const activeScore = scoreActiveHints(hints);
+      return {
+        el: btn,
+        info,
+        hints,
+        text,
+        scopeSignature,
+        activeScore,
+        selectable: false,
+      };
+    });
+
+    const entryByElement = new Map();
+    for (const entry of entries) {
+      entry.selectable = isSelectableSlot(entry.el, entry.hints);
+      entryByElement.set(entry.el, entry);
+    }
+
+    const activeEntries = entries
+      .filter((entry) => entry.activeScore > 0)
+      .sort((a, b) => b.activeScore - a.activeScore);
+
+    let currentEntry = null;
+    if (activeEntries.length) {
+      const top = activeEntries[0];
+      const runnerUp = activeEntries[1];
+      if (
+        top.activeScore >= 30 &&
+        (!runnerUp || top.activeScore > runnerUp.activeScore || top.activeScore >= 90)
+      ) {
+        currentEntry = top;
+      }
+    }
+
+    let usedStoredCurrent = false;
+    if ((!currentEntry || !currentEntry.info) && lastKnownCurrentSlot) {
+      const storedEntry = findEntryByStoredSignature(entries, lastKnownCurrentSlot);
+      if (storedEntry) {
+        currentEntry = storedEntry;
+        usedStoredCurrent = true;
+      }
+    }
+
+    if (!currentEntry) {
+      const now = Date.now();
+      if (now - lastActiveDetectionFailureLogTime > 15_000) {
+        lastActiveDetectionFailureLogTime = now;
+        log('現在の予約枠を特定できませんでした');
+        const debugSummary = entries
+          .slice()
+          .sort((a, b) => b.activeScore - a.activeScore)
+          .slice(0, 6)
+          .map((entry) => {
+            const label = entry.info?.label || '?';
+            const hintSummary = entry.hints.slice(0, 3).join('|') || 'no-hints';
+            const scorePart = entry.activeScore ? `:${entry.activeScore}` : '';
+            return `${label}${scorePart}:${hintSummary}`;
+          })
+          .join(' / ');
+        if (debugSummary) {
+          log(`候補情報: ${debugSummary}`);
+        }
+      }
       return 'no-slot';
     }
+    lastActiveDetectionFailureLogTime = 0;
 
-    const currentInfo = extractSlotInfo(currentButton);
-    if (!currentInfo) {
-      let snippet = '';
-      try {
-        snippet = (currentButton.outerHTML || '').replace(/\s+/g, ' ').trim();
-      } catch (e) {
-        snippet = '';
+    let currentInfo = currentEntry.info;
+    if (!currentInfo || Number.isNaN(currentInfo.minutes)) {
+      if (lastKnownCurrentSlot && lastKnownCurrentSlot.minutes != null) {
+        currentInfo = {
+          text: lastKnownCurrentSlot.text || lastKnownCurrentSlot.label || '',
+          label: lastKnownCurrentSlot.label || '',
+          minutes: lastKnownCurrentSlot.minutes,
+        };
+        usedStoredCurrent = true;
+      } else {
+        let snippet = '';
+        try {
+          snippet = (currentEntry.el.outerHTML || '').replace(/\s+/g, ' ').trim();
+        } catch (e) {
+          snippet = '';
+        }
+        if (snippet.length > 180) {
+          snippet = snippet.slice(0, 177) + '…';
+        }
+        const messages = ['現在の予約時間を取得できませんでした'];
+        if (snippet) {
+          messages.push(`要素抜粋: ${snippet}`);
+        }
+        log(...messages);
+        return 'error';
       }
-      if (snippet.length > 180) {
-        snippet = snippet.slice(0, 177) + '…';
-      }
-      const messages = ['現在の予約時間を取得できませんでした'];
-      if (snippet) {
-        messages.push(`要素抜粋: ${snippet}`);
-      }
-      log(...messages);
-      return 'error';
     }
-    const scopeSignature = getSlotScopeSignature(currentButton);
-    const scopeLabel = describeSlotScope(currentButton);
-    const buttonText = (currentButton.innerText || currentButton.textContent || '').trim();
-    const currentDisplayLabel = buttonText ? buttonText.split(/\s+/)[0] : currentInfo.label;
+
+    const scopeSignature = currentEntry.scopeSignature || getSlotScopeSignature(currentEntry.el);
+    const scopeLabel = describeSlotScope(currentEntry.el);
+    const buttonText = currentEntry.text;
+    const displayCandidates = [
+      buttonText ? buttonText.split(/\s+/)[0] : '',
+      currentInfo.label,
+      lastKnownCurrentSlot && lastKnownCurrentSlot.displayLabel,
+    ].filter(Boolean);
+    const currentDisplayLabel = displayCandidates.length ? displayCandidates[0] : (currentInfo.label || '');
     const currentSignature = `${scopeSignature}|${currentDisplayLabel}`;
-    if (lastLoggedCurrentSlotSignature !== currentSignature) {
+    const scopeMessage = scopeLabel ? `（${scopeLabel}）` : '';
+    const shouldLogCurrentSlot =
+      lastLoggedCurrentSlotSignature !== currentSignature ||
+      (usedStoredCurrent && !lastLoggedUsedStoredForCurrent) ||
+      (!usedStoredCurrent && lastLoggedUsedStoredForCurrent);
+    if (shouldLogCurrentSlot) {
       lastLoggedCurrentSlotSignature = currentSignature;
-      const scopeMessage = scopeLabel ? `（${scopeLabel}）` : '';
-      log(`現在の予約枠: ${currentDisplayLabel}${scopeMessage}`);
+      lastLoggedUsedStoredForCurrent = usedStoredCurrent;
+      const suffix = usedStoredCurrent ? '［保存情報から推定］' : '';
+      log(`現在の予約枠: ${currentDisplayLabel}${scopeMessage}${suffix}`);
+    } else {
+      lastLoggedUsedStoredForCurrent = usedStoredCurrent;
     }
 
-    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentButton);
+    if (currentInfo && Number.isFinite(currentInfo.minutes)) {
+      lastKnownCurrentSlot = {
+        scopeSignature: scopeSignature || '',
+        scopeLabel,
+        label: currentInfo.label || currentDisplayLabel,
+        displayLabel: currentDisplayLabel,
+        minutes: currentInfo.minutes,
+        text: buttonText || '',
+      };
+    }
+
+    const candidateButtons = scopeButtonsToCurrentDay(buttons, currentEntry.el);
 
     const candidates = candidateButtons
-      .map(btn => {
-        const info = extractSlotInfo(btn);
-        if (!info) return null;
-        return { el: btn, info, selectable: isSelectableSlot(btn) };
+      .map((btn) => entryByElement.get(btn))
+      .filter((entry) => {
+        if (!entry || !entry.info || !entry.selectable) return false;
+        return entry.info.minutes < currentInfo.minutes;
       })
-      .filter(Boolean)
-      .filter(item => item.selectable && item.info.minutes < currentInfo.minutes)
       .sort((a, b) => b.info.minutes - a.info.minutes);
 
     if (!candidates.length) {
