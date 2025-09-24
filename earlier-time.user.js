@@ -364,9 +364,14 @@
 
     const btn = document.createElement('button');
     Object.assign(btn.style, { padding: '4px 8px', cursor: 'pointer' });
-    const label = () => btn.textContent = isEnabled() ? '自動：ON' : '自動：OFF';
-    label();
-    btn.onclick = () => { setEnabled(!isEnabled()); label(); };
+    function updateToggleLabel() {
+      btn.textContent = isEnabled() ? '自動：ON' : '自動：OFF';
+    }
+    updateToggleLabel();
+    btn.onclick = () => {
+      setEnabled(!isEnabled());
+      updateToggleLabel();
+    };
 
     const limitBtn = document.createElement('button');
     limitBtn.textContent = '回数リセット';
