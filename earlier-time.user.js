@@ -22,7 +22,7 @@
     timePattern: /([01]?\d|2[0-3]):[0-5]\d/,
     setVisitButtonText: /来場日時を設定する/,
     confirmButtonText: /来場日時を変更する/,
-    successToast: /来場日時が設定されました/, 
+    successToast: /来場日時が設定されました/,
     failureToast: /定員を超えたため、ご希望の時間帯は選択できませんでした/,
   };
 
@@ -32,7 +32,7 @@
 
   // リロード許可ウィンドウ（サーバー時刻）
   const WINDOW_START = 43; // >= 43s
-  const WINDOW_END = 53;   // < 53s
+  const WINDOW_END = 53; // < 53s
   const MAX_RELOADS_PER_MINUTE = 4;
 
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）
