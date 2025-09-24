@@ -188,7 +188,6 @@
   /***** リロード制御（サーバー時刻ベース） *****/
   let reloadsThisMinute = 0;
   let ticking = false;
-  let stopped = false;
   let pendingReload = false;
   let attemptBlockedUntil = 0;
   let reloadInfo = loadReloadInfo();
@@ -197,12 +196,37 @@
   function extractSlotInfo(el) {
     if (!el) return null;
     const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
-    const match = text.match(SELECTORS.timePattern);
+    const attrSources = [
+      text,
+      el.getAttribute('data-time-slot') || '',
+      el.getAttribute('data-time') || '',
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('title') || '',
+    ];
+    let html = '';
+    try {
+      html = (el.outerHTML || '').replace(/\s+/g, ' ');
+    } catch (e) {
+      html = '';
+    }
+    attrSources.push(html);
+
+    let match = null;
+    let matchSource = '';
+    for (const src of attrSources) {
+      if (!src) continue;
+      const found = src.match(SELECTORS.timePattern);
+      if (found) {
+        match = found;
+        matchSource = src;
+        break;
+      }
+    }
     if (!match) return null;
     const [h, m] = match[0].split(':').map(n => parseInt(n, 10));
     if (Number.isNaN(h) || Number.isNaN(m)) return null;
     return {
-      text,
+      text: text || matchSource || match[0],
       label: match[0],
       minutes: h * 60 + m,
     };
@@ -288,7 +312,20 @@
 
     const currentInfo = extractSlotInfo(currentButton);
     if (!currentInfo) {
-      log('現在の予約時間を取得できませんでした');
+      let snippet = '';
+      try {
+        snippet = (currentButton.outerHTML || '').replace(/\s+/g, ' ').trim();
+      } catch (e) {
+        snippet = '';
+      }
+      if (snippet.length > 180) {
+        snippet = snippet.slice(0, 177) + '…';
+      }
+      const messages = ['現在の予約時間を取得できませんでした'];
+      if (snippet) {
+        messages.push(`要素抜粋: ${snippet}`);
+      }
+      log(...messages);
       return 'error';
     }
     const scopeSelectors = [
@@ -354,7 +391,6 @@
     const result = await waitForToastResult();
     if (result === 'success') {
       log('来場日時の変更に成功しました。スクリプトを停止します。');
-      stopped = true;
       setEnabled(false);
       return 'success';
     }
@@ -374,7 +410,7 @@
   }
 
   async function tick() {
-    if (ticking || stopped || pendingReload) return;
+    if (ticking || pendingReload) return;
     ticking = true;
     try {
       let result = 'skipped';
@@ -386,7 +422,7 @@
           scheduleReload('例外発生');
           return;
         }
-        if (stopped || pendingReload) return;
+        if (pendingReload) return;
         if (result === 'success' || result === 'failure') {
           return;
         }
