@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
-// @version      2025-09-24.1
+// @version      2025-09-24.2
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
@@ -41,6 +41,7 @@
 
   // トグル保存キー
   const ENABLE_KEY = 'expo_adv_enable_v2';
+  let enabledFallback = false;
 
   /***** 便利ユーティリティ *****/
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -234,7 +235,26 @@
       return 'error';
     }
 
-    const candidates = buttons
+    const scopeSelectors = [
+      '[role="tabpanel"]',
+      '[data-date]',
+      '[data-day]',
+      '[data-tab-id]',
+      '[data-date-value]',
+      'tbody',
+      'table',
+    ];
+    const scopedButtons = buttons.filter(btn =>
+      scopeSelectors.every(sel => {
+        const scopeEl = currentButton.closest(sel);
+        if (!scopeEl) return true;
+        return btn.closest(sel) === scopeEl;
+      })
+    );
+
+    const candidateButtons = scopedButtons.length ? scopedButtons : buttons;
+
+    const candidates = candidateButtons
       .map(btn => {
         const info = extractSlotInfo(btn);
         if (!info) return null;
@@ -344,11 +364,22 @@
 
   /***** UI：トグル＆ログ *****/
   function isEnabled() {
-    const v = localStorage.getItem(ENABLE_KEY);
-    return v === null ? true : v === '1';
+    try {
+      const v = sessionStorage.getItem(ENABLE_KEY);
+      if (v === null) return enabledFallback;
+      enabledFallback = v === '1';
+      return enabledFallback;
+    } catch {
+      return enabledFallback;
+    }
   }
   function setEnabled(flag) {
-    localStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
+    enabledFallback = flag;
+    try {
+      sessionStorage.setItem(ENABLE_KEY, flag ? '1' : '0');
+    } catch {
+      // storage unavailable
+    }
   }
 
   function ensureToggle() {
