@@ -688,7 +688,6 @@
     ].filter(Boolean);
     const currentDisplayLabel = displayCandidates.length ? displayCandidates[0] : '';
     const currentSignature = `${scopeSignature}|${currentDisplayLabel}`;
-    const scopeMessage = scopeLabel ? `（${scopeLabel}）` : '';
     const shouldLogCurrentSlot =
       lastLoggedCurrentSlotSignature !== currentSignature ||
       (usedStoredCurrent && !lastLoggedUsedStoredForCurrent) ||
@@ -697,7 +696,7 @@
       lastLoggedCurrentSlotSignature = currentSignature;
       lastLoggedUsedStoredForCurrent = usedStoredCurrent;
       const suffix = usedStoredCurrent ? '［保存情報から推定］' : '';
-      log(`現在の予約枠: ${currentDisplayLabel}${scopeMessage}${suffix}`);
+      log(`現在の予約枠: ${currentDisplayLabel}${suffix}`);
     } else {
       lastLoggedUsedStoredForCurrent = usedStoredCurrent;
     }
