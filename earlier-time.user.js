@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
-// @version      2025-09-24.4
+// @version      2025-09-24.5
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
@@ -77,6 +77,7 @@
   let lastActiveDetectionFailureLogTime = 0;
   let lastSuccessfulCheckTime = 0;
   let lastReloadDeferLogBucket = null;
+  let checkCompletedThisLoad = false;
 
   const ACTIVE_TEXT_PATTERNS = [
     /現在.*予約/,
@@ -775,14 +776,17 @@
     if (ticking || pendingReload) return;
     ticking = true;
     try {
-      let result = { status: 'skipped', checked: lastSuccessfulCheckTime > 0 };
-      if (Date.now() >= attemptBlockedUntil) {
+      let result = { status: 'skipped', checked: checkCompletedThisLoad };
+      if (!checkCompletedThisLoad && Date.now() >= attemptBlockedUntil) {
         try {
           result = await tryReservationChangeOnPrevSlot();
         } catch (e) {
           log('予約変更処理で例外:', e.message || e);
           scheduleReload('例外発生');
           return;
+        }
+        if (result.checked) {
+          checkCompletedThisLoad = true;
         }
         if (pendingReload) return;
         if (result.status === 'success' || result.status === 'failure') {
@@ -815,7 +819,8 @@
 
       const inWindow = sec >= WINDOW_START && sec < WINDOW_END;
       const hasRecentCheck =
-        lastSuccessfulCheckTime > 0 && (Date.now() - lastSuccessfulCheckTime) <= RECENT_CHECK_THRESHOLD_MS;
+        lastSuccessfulCheckTime > 0 &&
+        (checkCompletedThisLoad || Date.now() - lastSuccessfulCheckTime <= RECENT_CHECK_THRESHOLD_MS);
       if (inWindow && reloadsThisMinute < MAX_RELOADS_PER_MINUTE) {
         if (!hasRecentCheck) {
           if (lastReloadDeferLogBucket !== bucket) {
