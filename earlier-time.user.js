@@ -39,6 +39,7 @@
 
   // 予約操作のタイムアウト/待機
   const ACTION_TIMEOUT_MS = 10_000;
+  const RECENT_CHECK_THRESHOLD_MS = 10_000;
   const DOM_POLL_INTERVAL_MS = 150;
 
   // リロード許可ウィンドウ（サーバー時刻）
@@ -74,6 +75,8 @@
   let lastLoggedUsedStoredForCurrent = false;
   let lastKnownCurrentSlot = null;
   let lastActiveDetectionFailureLogTime = 0;
+  let lastSuccessfulCheckTime = 0;
+  let lastReloadDeferLogBucket = null;
 
   const ACTIVE_TEXT_PATTERNS = [
     /現在.*予約/,
@@ -561,10 +564,11 @@
   }
 
   async function tryReservationChangeOnPrevSlot() {
+    let confirmedCurrentSlot = false;
     const buttons = collectSlotButtons();
     if (!buttons.length) {
       log('時間選択ボタンが見つかりませんでした');
-      return 'no-slot';
+      return { status: 'pending', checked: false };
     }
 
     const entries = buttons.map((btn) => {
@@ -635,7 +639,7 @@
           log(`候補情報: ${debugSummary}`);
         }
       }
-      return 'no-slot';
+      return { status: 'pending', checked: false };
     }
     lastActiveDetectionFailureLogTime = 0;
 
@@ -663,7 +667,7 @@
           messages.push(`要素抜粋: ${snippet}`);
         }
         log(...messages);
-        return 'error';
+        return { status: 'error', checked: false };
       }
     }
 
@@ -702,6 +706,9 @@
       };
     }
 
+    confirmedCurrentSlot = true;
+    lastSuccessfulCheckTime = Date.now();
+
     const candidateButtons = scopeButtonsToCurrentDay(buttons, currentEntry.el);
 
     const candidates = candidateButtons
@@ -714,14 +721,14 @@
 
     if (!candidates.length) {
       log('現在の予約時間より前で選択可能な枠はありません');
-      return 'no-slot';
+      return { status: 'no-slot', checked: true };
     }
 
     const target = candidates[0];
 
     const attempt = await registerAttempt();
     if (!attempt.allowed) {
-      return 'limit';
+      return { status: 'limit', checked: true };
     }
 
     log(`前倒し候補を選択: ${target.info.label} (${target.info.text})`);
@@ -730,7 +737,7 @@
     const setBtn = await waitForButtonByText(SELECTORS.setVisitButtonText);
     if (!setBtn) {
       log('「来場日時を設定する」ボタンが見つかりませんでした');
-      return 'error';
+      return { status: 'error', checked: confirmedCurrentSlot };
     }
     setBtn.click();
     log('「来場日時を設定する」を押下');
@@ -738,7 +745,7 @@
     const confirmBtn = await waitForButtonByText(SELECTORS.confirmButtonText);
     if (!confirmBtn) {
       log('確認モーダルの「来場日時を変更する」ボタンが見つかりませんでした');
-      return 'error';
+      return { status: 'error', checked: confirmedCurrentSlot };
     }
     confirmBtn.click();
     log('「来場日時を変更する」を押下');
@@ -747,16 +754,16 @@
     if (result === 'success') {
       log('来場日時の変更に成功しました。スクリプトを停止します。');
       setEnabled(false);
-      return 'success';
+      return { status: 'success', checked: confirmedCurrentSlot };
     }
     if (result === 'failure') {
       log('定員オーバーのトーストを検出しました');
       scheduleReload('変更失敗トースト');
-      return 'failure';
+      return { status: 'failure', checked: confirmedCurrentSlot };
     }
 
     log('変更結果のトーストが確認できませんでした');
-    return 'error';
+    return { status: 'error', checked: confirmedCurrentSlot };
   }
 
   function reloadPage(reason = '') {
@@ -768,7 +775,7 @@
     if (ticking || pendingReload) return;
     ticking = true;
     try {
-      let result = 'skipped';
+      let result = { status: 'skipped', checked: lastSuccessfulCheckTime > 0 };
       if (Date.now() >= attemptBlockedUntil) {
         try {
           result = await tryReservationChangeOnPrevSlot();
@@ -778,7 +785,7 @@
           return;
         }
         if (pendingReload) return;
-        if (result === 'success' || result === 'failure') {
+        if (result.status === 'success' || result.status === 'failure') {
           return;
         }
       }
@@ -807,7 +814,17 @@
       }
 
       const inWindow = sec >= WINDOW_START && sec < WINDOW_END;
+      const hasRecentCheck =
+        lastSuccessfulCheckTime > 0 && (Date.now() - lastSuccessfulCheckTime) <= RECENT_CHECK_THRESHOLD_MS;
       if (inWindow && reloadsThisMinute < MAX_RELOADS_PER_MINUTE) {
+        if (!hasRecentCheck) {
+          if (lastReloadDeferLogBucket !== bucket) {
+            log('現在の予約枠の確認待ちのためリロードを一時停止します');
+            lastReloadDeferLogBucket = bucket;
+          }
+          return;
+        }
+        lastReloadDeferLogBucket = null;
         reloadsThisMinute++;
         reloadInfo.count = reloadsThisMinute;
         saveReloadInfo(reloadInfo);
@@ -815,8 +832,11 @@
         reloadPage(`サーバー時刻 ${sec}s（分内 ${reloadsThisMinute}/${MAX_RELOADS_PER_MINUTE}）`);
         return;
       }
+      if (!inWindow) {
+        lastReloadDeferLogBucket = null;
+      }
 
-      if (result === 'limit') {
+      if (result.status === 'limit') {
         // ログは registerAttempt 内で出力済み。上限解除まで待機。
       }
     } finally {
