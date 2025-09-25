@@ -60,6 +60,23 @@
   const logBuffer = [];
   let logPanel;
 
+  const STATUS_LABELS = {
+    idle: '待機中',
+    running: '実行中',
+    done: '完了',
+  };
+  let currentStatus = 'idle';
+  let statusIndicator;
+
+  function setStatus(state) {
+    currentStatus = state;
+    if (statusIndicator) {
+      const label = STATUS_LABELS[state] || state;
+      statusIndicator.textContent = label;
+      statusIndicator.dataset.status = state;
+    }
+  }
+
   const SLOT_SCOPE_SELECTORS = [
     '[role="tabpanel"]',
     '[data-date]',
@@ -793,6 +810,7 @@
     const result = await waitForToastResult();
     if (result === 'success') {
       log('来場日時の変更に成功しました。スクリプトを停止します。');
+      setStatus('done');
       setEnabled(false);
       return { status: 'success', checked: confirmedCurrentSlot };
     }
@@ -814,6 +832,7 @@
   async function tick() {
     if (ticking || pendingReload) return;
     ticking = true;
+    setStatus('running');
     try {
       let result = { status: 'skipped', checked: checkCompletedThisLoad };
       if (!checkCompletedThisLoad && Date.now() >= attemptBlockedUntil) {
@@ -884,6 +903,9 @@
         // ログは registerAttempt 内で出力済み。上限解除まで待機。
       }
     } finally {
+      if (currentStatus !== 'done') {
+        setStatus('idle');
+      }
       ticking = false;
     }
   }
@@ -909,7 +931,14 @@
   }
 
   function ensureToggle() {
-    if ($('#expo-adv-toggle')) return;
+    const existingWrap = $('#expo-adv-toggle');
+    if (existingWrap) {
+      statusIndicator = existingWrap.querySelector('#expo-adv-status-value');
+      if (statusIndicator) {
+        setStatus(currentStatus);
+      }
+      return;
+    }
     const wrap = document.createElement('div');
     wrap.id = 'expo-adv-toggle';
     Object.assign(wrap.style, {
@@ -926,8 +955,14 @@
     }
     updateToggleLabel();
     btn.onclick = () => {
-      setEnabled(!isEnabled());
+      const next = !isEnabled();
+      setEnabled(next);
       updateToggleLabel();
+      if (next) {
+        setStatus('idle');
+      } else if (currentStatus !== 'done') {
+        setStatus('idle');
+      }
     };
 
     const logBtn = document.createElement('button');
@@ -935,7 +970,22 @@
     Object.assign(logBtn.style, { padding: '4px 8px', cursor: 'pointer' });
     logBtn.onclick = toggleLogPanel;
 
-    wrap.append(btn, logBtn);
+    const statusWrap = document.createElement('span');
+    statusWrap.id = 'expo-adv-status';
+    Object.assign(statusWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const statusLabel = document.createElement('span');
+    statusLabel.textContent = '状態:';
+
+    const statusValue = document.createElement('span');
+    statusValue.id = 'expo-adv-status-value';
+    Object.assign(statusValue.style, { fontWeight: 'bold' });
+    statusIndicator = statusValue;
+    setStatus(currentStatus);
+
+    statusWrap.append(statusLabel, statusValue);
+
+    wrap.append(btn, logBtn, statusWrap);
     document.documentElement.appendChild(wrap);
   }
 
