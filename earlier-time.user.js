@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Expo2025 予約前倒し：直前空き枠の自動取得
+// @name         Expo2025 予約繰り上げ
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
 // @version      1.0
 // @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内4回までリトライ。
