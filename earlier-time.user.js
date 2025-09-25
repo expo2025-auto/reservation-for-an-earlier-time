@@ -430,6 +430,12 @@
   let reloadInfo = loadReloadInfo();
 
   // 予約変更フロー：直前枠が空いていたら実行
+  function extractFirstTimeText(source) {
+    if (!source) return '';
+    const match = String(source).match(SELECTORS.timePattern);
+    return match ? match[0] : '';
+  }
+
   function extractSlotInfo(el) {
     if (!el) return null;
     const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
@@ -676,11 +682,11 @@
     const scopeLabel = describeSlotScope(currentEntry.el);
     const buttonText = currentEntry.text;
     const displayCandidates = [
-      buttonText ? buttonText.split(/\s+/)[0] : '',
       currentInfo.label,
+      extractFirstTimeText(buttonText),
       lastKnownCurrentSlot && lastKnownCurrentSlot.displayLabel,
     ].filter(Boolean);
-    const currentDisplayLabel = displayCandidates.length ? displayCandidates[0] : (currentInfo.label || '');
+    const currentDisplayLabel = displayCandidates.length ? displayCandidates[0] : '';
     const currentSignature = `${scopeSignature}|${currentDisplayLabel}`;
     const scopeMessage = scopeLabel ? `（${scopeLabel}）` : '';
     const shouldLogCurrentSlot =
