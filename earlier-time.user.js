@@ -2,7 +2,7 @@
 // @name         Expo2025 予約前倒し：直前空き枠の自動取得
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
 // @version      1.0
-// @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内3回までリトライ。
+// @description  現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内4回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time.user.js
 // @author       you
@@ -888,7 +888,7 @@
     const btn = document.createElement('button');
     Object.assign(btn.style, { padding: '4px 8px', cursor: 'pointer' });
     function updateToggleLabel() {
-      btn.textContent = isEnabled() ? '自動：ON' : '自動：OFF';
+      btn.textContent = isEnabled() ? '自動変更：ON' : '自動変更：OFF';
     }
     updateToggleLabel();
     btn.onclick = () => {
