@@ -67,6 +67,8 @@
   };
   let currentStatus = 'idle';
   let statusIndicator;
+  let currentSlotIndicator;
+  let currentSlotDisplay = { label: '', estimated: false, text: '未取得' };
 
   function setStatus(state) {
     currentStatus = state;
@@ -74,6 +76,27 @@
       const label = STATUS_LABELS[state] || state;
       statusIndicator.textContent = label;
       statusIndicator.dataset.status = state;
+    }
+  }
+
+  function setCurrentSlotDisplay(label, options = {}) {
+    const normalized = label ? String(label).trim() : '';
+    const estimated = !!options.estimated;
+    const fallback = options.fallback || '未取得';
+    let text;
+    if (normalized) {
+      text = estimated ? `${normalized}（推定）` : normalized;
+    } else {
+      text = fallback;
+    }
+    currentSlotDisplay = { label: normalized, estimated, text };
+    if (currentSlotIndicator) {
+      currentSlotIndicator.textContent = text;
+      if (estimated) {
+        currentSlotIndicator.dataset.estimated = '1';
+      } else {
+        delete currentSlotIndicator.dataset.estimated;
+      }
     }
   }
 
@@ -678,6 +701,11 @@
     }
 
     if (!currentEntry) {
+      if (lastKnownCurrentSlot && lastKnownCurrentSlot.displayLabel) {
+        setCurrentSlotDisplay(lastKnownCurrentSlot.displayLabel, { estimated: true });
+      } else {
+        setCurrentSlotDisplay('', { fallback: '未検出' });
+      }
       const now = Date.now();
       if (now - lastActiveDetectionFailureLogTime > 15_000) {
         lastActiveDetectionFailureLogTime = now;
@@ -738,6 +766,7 @@
       lastKnownCurrentSlot && lastKnownCurrentSlot.displayLabel,
     ].filter(Boolean);
     const currentDisplayLabel = displayCandidates.length ? displayCandidates[0] : '';
+    setCurrentSlotDisplay(currentDisplayLabel, { estimated: usedStoredCurrent });
     const currentSignature = `${scopeSignature}|${currentDisplayLabel}`;
     const shouldLogCurrentSlot =
       lastLoggedCurrentSlotSignature !== currentSignature ||
@@ -937,6 +966,15 @@
       if (statusIndicator) {
         setStatus(currentStatus);
       }
+      currentSlotIndicator = existingWrap.querySelector('#expo-adv-current-slot-value');
+      if (currentSlotIndicator) {
+        currentSlotIndicator.textContent = currentSlotDisplay.text;
+        if (currentSlotDisplay.estimated) {
+          currentSlotIndicator.dataset.estimated = '1';
+        } else {
+          delete currentSlotIndicator.dataset.estimated;
+        }
+      }
       return;
     }
     const wrap = document.createElement('div');
@@ -985,7 +1023,25 @@
 
     statusWrap.append(statusLabel, statusValue);
 
-    wrap.append(btn, logBtn, statusWrap);
+    const currentSlotWrap = document.createElement('span');
+    currentSlotWrap.id = 'expo-adv-current-slot';
+    Object.assign(currentSlotWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const currentSlotLabel = document.createElement('span');
+    currentSlotLabel.textContent = '現在の予約:';
+
+    const currentSlotValue = document.createElement('span');
+    currentSlotValue.id = 'expo-adv-current-slot-value';
+    Object.assign(currentSlotValue.style, { fontWeight: 'bold' });
+    currentSlotIndicator = currentSlotValue;
+    currentSlotIndicator.textContent = currentSlotDisplay.text;
+    if (currentSlotDisplay.estimated) {
+      currentSlotIndicator.dataset.estimated = '1';
+    }
+
+    currentSlotWrap.append(currentSlotLabel, currentSlotValue);
+
+    wrap.append(btn, logBtn, statusWrap, currentSlotWrap);
     document.documentElement.appendChild(wrap);
   }
 
