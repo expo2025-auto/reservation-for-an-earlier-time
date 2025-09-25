@@ -349,7 +349,7 @@
   }
 
   async function registerAttempt() {
-    const now = await getServerDate().catch(() => new Date());
+    const now = await getServerDate();
     const nowMs = now.getTime();
     const bucket = Math.floor(nowMs / 60_000);
     const info = loadAttemptInfo();
@@ -391,7 +391,12 @@
   }
 
   /***** サーバー時刻取得（Dateヘッダ） *****/
-  async function getServerDate() {
+  let serverTimeOffsetMs = 0;
+  let hasServerTime = false;
+  let serverTimeInitFailed = false;
+  let serverTimeInitPromise = null;
+
+  async function fetchServerDate() {
     // 同一オリジン HEAD をまず試す
     try {
       const res = await fetch(location.origin + '/', { method: 'HEAD', cache: 'no-store' });
@@ -410,7 +415,7 @@
         url: location.origin + '/',
         headers: { 'Cache-Control': 'no-store' },
         onload: (res) => {
-          const m = /^date:\s*(.+)$/gim.exec(res.responseHeaders || '');
+          const m = /^date:\s*(.+)$/im.exec(res.responseHeaders || '');
           if (m && m[1]) {
             resolve(new Date(m[1]));
           } else {
@@ -420,6 +425,35 @@
         onerror: (err) => reject(err),
       });
     });
+  }
+
+  async function getServerDate() {
+    if (!hasServerTime && !serverTimeInitFailed) {
+      if (!serverTimeInitPromise) {
+        serverTimeInitPromise = (async () => {
+          const serverDate = await fetchServerDate();
+          serverTimeOffsetMs = serverDate.getTime() - Date.now();
+          hasServerTime = true;
+          return new Date(Date.now() + serverTimeOffsetMs);
+        })()
+          .catch((err) => {
+            serverTimeInitFailed = true;
+            throw err;
+          })
+          .finally(() => {
+            serverTimeInitPromise = null;
+          });
+      }
+      try {
+        return await serverTimeInitPromise;
+      } catch (e) {
+        // 端末時刻にフォールバック
+      }
+    }
+    if (hasServerTime) {
+      return new Date(Date.now() + serverTimeOffsetMs);
+    }
+    return new Date();
   }
 
   /***** リロード制御（サーバー時刻ベース） *****/
@@ -799,7 +833,7 @@
         }
       }
 
-      const now = await getServerDate().catch(() => new Date());
+      const now = await getServerDate();
       const nowMs = now.getTime();
       const sec = now.getSeconds();
       const bucket = Math.floor(nowMs / 60_000);
@@ -957,6 +991,13 @@
     ensureToggle();
     openLogPanel();
     log('スクリプト起動');
+    getServerDate().then((date) => {
+      if (hasServerTime) {
+        log(`サーバー時刻を基準に同期します（現在 ${date.toLocaleTimeString()}）`);
+      } else {
+        log('サーバー時刻の取得に失敗したため端末時刻を使用します');
+      }
+    });
     setInterval(async () => {
       if (!isEnabled()) return;
       await tick();
