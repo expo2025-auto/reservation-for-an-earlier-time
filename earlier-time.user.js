@@ -33,6 +33,10 @@
     timePattern: /([01]?\d|2[0-3]):[0-5]\d/,
     setVisitButtonText: /来場日時を設定する/,
     confirmButtonText: /来場日時を変更する/,
+    confirmToastButton: [
+      'button.style_next_button__N_pbs',
+      '.style_next_button__N_pbs[role="button"]',
+    ],
     successToast: /来場日時が設定されました/,
     failureToast: /定員を超えたため、ご希望の時間帯は選択できませんでした/,
   };
@@ -340,10 +344,23 @@
   }
 
   // :matches() 疑似を簡易サポート（innerTextでフィルタ）
-  function findButtonByText(patterns) {
+  function isElementVisible(el) {
+    if (!el) return false;
+    if (el.hasAttribute('hidden')) return false;
+    const style = window.getComputedStyle(el);
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    return !!(rect.width && rect.height);
+  }
+
+  function findButtonByText(patterns, options = {}) {
+    const { requireVisible = false } = options;
     const pats = Array.isArray(patterns) ? patterns : [patterns];
     const buttons = $$('button, [role="button"]');
     for (const b of buttons) {
+      if (requireVisible && !isElementVisible(b)) continue;
       const t = (b.innerText || b.textContent || '').trim();
       if (pats.some(p => (p instanceof RegExp ? p.test(t) : t.includes(p)))) return b;
     }
@@ -568,11 +585,25 @@
     return true;
   }
 
-  async function waitForButtonByText(pattern) {
+  async function waitForButtonByText(pattern, options = {}) {
     const t0 = Date.now();
     while (Date.now() - t0 < ACTION_TIMEOUT_MS) {
-      const btn = findButtonByText(pattern);
+      const btn = findButtonByText(pattern, options);
       if (btn) return btn;
+      await sleep(DOM_POLL_INTERVAL_MS);
+    }
+    return null;
+  }
+
+  async function waitForConfirmButton() {
+    const t0 = Date.now();
+    while (Date.now() - t0 < ACTION_TIMEOUT_MS) {
+      for (const sel of SELECTORS.confirmToastButton) {
+        const btn = document.querySelector(sel);
+        if (btn && isElementVisible(btn)) return btn;
+      }
+      const fallback = findButtonByText(SELECTORS.confirmButtonText, { requireVisible: true });
+      if (fallback) return fallback;
       await sleep(DOM_POLL_INTERVAL_MS);
     }
     return null;
@@ -828,7 +859,7 @@
     setBtn.click();
     log('「来場日時を設定する」を押下');
 
-    const confirmBtn = await waitForButtonByText(SELECTORS.confirmButtonText);
+    const confirmBtn = await waitForConfirmButton();
     if (!confirmBtn) {
       log('確認モーダルの「来場日時を変更する」ボタンが見つかりませんでした');
       return { status: 'error', checked: confirmedCurrentSlot };
