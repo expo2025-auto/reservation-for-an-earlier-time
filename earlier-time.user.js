@@ -71,6 +71,7 @@
   let currentSlotDisplay = { label: '', estimated: false, text: '未取得' };
   let nextUpdateIndicator;
   let nextUpdateTimerId = null;
+  let reloadsThisMinute = 0;
 
   function setStatus(state) {
     currentStatus = state;
@@ -112,6 +113,33 @@
     return `${(clamped / 1000).toFixed(1)}秒`;
   }
 
+  function getSyncedNowMs() {
+    if (hasServerTime) {
+      return Date.now() + serverTimeOffsetMs;
+    }
+    return Date.now();
+  }
+
+  function getNextUpdateRemainingMs() {
+    const nowMs = getSyncedNowMs();
+    const msIntoMinute = ((nowMs % 60_000) + 60_000) % 60_000;
+    const windowStartMs = WINDOW_START * 1000;
+    const windowEndMs = WINDOW_END * 1000;
+    if (reloadsThisMinute >= MAX_RELOADS_PER_MINUTE) {
+      if (msIntoMinute < windowStartMs) {
+        return windowStartMs - msIntoMinute;
+      }
+      return 60_000 - msIntoMinute + windowStartMs;
+    }
+    if (msIntoMinute >= windowStartMs && msIntoMinute < windowEndMs) {
+      return 0;
+    }
+    if (msIntoMinute < windowStartMs) {
+      return windowStartMs - msIntoMinute;
+    }
+    return 60_000 - msIntoMinute + windowStartMs;
+  }
+
   function updateNextUpdateDisplay() {
     if (!nextUpdateIndicator) return;
     let text = '---';
@@ -124,7 +152,8 @@
     } else if (attemptBlockedUntil > Date.now()) {
       text = formatRemaining(attemptBlockedUntil - Date.now());
     } else {
-      text = 'まもなく';
+      const remainingMs = Math.max(0, getNextUpdateRemainingMs());
+      text = formatRemaining(remainingMs);
     }
     nextUpdateIndicator.textContent = text;
   }
@@ -541,7 +570,6 @@
   }
 
   /***** リロード制御（サーバー時刻ベース） *****/
-  let reloadsThisMinute = 0;
   let ticking = false;
   let pendingReload = false;
   let attemptBlockedUntil = 0;
