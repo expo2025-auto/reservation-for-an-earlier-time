@@ -60,10 +60,6 @@
   const ENABLE_KEY = 'expo_adv_enable_v2';
   let enabledFallback = false;
 
-  const LOG_MAX_LINES = 5;
-  const logBuffer = [];
-  let logPanel;
-
   const STATUS_LABELS = {
     idle: '待機中',
     running: '実行中',
@@ -73,6 +69,8 @@
   let statusIndicator;
   let currentSlotIndicator;
   let currentSlotDisplay = { label: '', estimated: false, text: '未取得' };
+  let nextUpdateIndicator;
+  let nextUpdateTimerId = null;
 
   function setStatus(state) {
     currentStatus = state;
@@ -81,6 +79,7 @@
       statusIndicator.textContent = label;
       statusIndicator.dataset.status = state;
     }
+    updateNextUpdateDisplay();
   }
 
   function setCurrentSlotDisplay(label, options = {}) {
@@ -102,6 +101,32 @@
         delete currentSlotIndicator.dataset.estimated;
       }
     }
+  }
+
+  function formatRemaining(ms) {
+    const clamped = Math.max(0, ms);
+    if (clamped >= 10_000) {
+      const seconds = Math.floor(clamped / 1000);
+      return `${seconds}秒`;
+    }
+    return `${(clamped / 1000).toFixed(1)}秒`;
+  }
+
+  function updateNextUpdateDisplay() {
+    if (!nextUpdateIndicator) return;
+    let text = '---';
+    if (!isEnabled()) {
+      text = '停止中';
+    } else if (currentStatus === 'done') {
+      text = '完了';
+    } else if (currentStatus === 'running') {
+      text = '実行中';
+    } else if (attemptBlockedUntil > Date.now()) {
+      text = formatRemaining(attemptBlockedUntil - Date.now());
+    } else {
+      text = 'まもなく';
+    }
+    nextUpdateIndicator.textContent = text;
   }
 
   const SLOT_SCOPE_SELECTORS = [
@@ -340,7 +365,6 @@
 
   function log(...args) {
     console.log('[ExpoAdvance]', ...args);
-    addLogEntry(args.map((arg) => String(arg)).join(' '));
   }
 
   // :matches() 疑似を簡易サポート（innerTextでフィルタ）
@@ -420,6 +444,7 @@
       const nextMinuteMs = (bucket + 1) * 60_000;
       const waitMs = Math.max(0, nextMinuteMs - nowMs);
       attemptBlockedUntil = Date.now() + waitMs;
+      updateNextUpdateDisplay();
       if (!info.logged) {
         log(`この分の予約変更試行上限(${MAX_ATTEMPTS_PER_MINUTE}回)に到達。${Math.ceil(waitMs / 1000)}秒待機します。`);
         info.logged = true;
@@ -431,6 +456,7 @@
     info.logged = false;
     saveAttemptInfo(info);
     attemptBlockedUntil = 0;
+    updateNextUpdateDisplay();
     log(`予約変更試行 ${info.count}/${MAX_ATTEMPTS_PER_MINUTE}（この分）`);
     return { allowed: true, now };
   }
@@ -442,6 +468,7 @@
       // storage unavailable
     }
     attemptBlockedUntil = 0;
+    updateNextUpdateDisplay();
     if (message) {
       log(message);
     }
@@ -970,7 +997,7 @@
     }
   }
 
-  /***** UI：トグル＆ログ *****/
+  /***** UI：トグル＆ステータス表示 *****/
   function isEnabled() {
     try {
       const v = sessionStorage.getItem(ENABLE_KEY);
@@ -988,6 +1015,7 @@
     } catch {
       // storage unavailable
     }
+    updateNextUpdateDisplay();
   }
 
   function ensureToggle() {
@@ -1005,6 +1033,10 @@
         } else {
           delete currentSlotIndicator.dataset.estimated;
         }
+      }
+      nextUpdateIndicator = existingWrap.querySelector('#expo-adv-next-update-value');
+      if (nextUpdateIndicator) {
+        updateNextUpdateDisplay();
       }
       return;
     }
@@ -1032,12 +1064,8 @@
       } else if (currentStatus !== 'done') {
         setStatus('idle');
       }
+      updateNextUpdateDisplay();
     };
-
-    const logBtn = document.createElement('button');
-    logBtn.textContent = 'ログ';
-    Object.assign(logBtn.style, { padding: '4px 8px', cursor: 'pointer' });
-    logBtn.onclick = toggleLogPanel;
 
     const statusWrap = document.createElement('span');
     statusWrap.id = 'expo-adv-status';
@@ -1072,61 +1100,32 @@
 
     currentSlotWrap.append(currentSlotLabel, currentSlotValue);
 
-    wrap.append(btn, logBtn, statusWrap, currentSlotWrap);
+    const nextUpdateWrap = document.createElement('span');
+    nextUpdateWrap.id = 'expo-adv-next-update';
+    Object.assign(nextUpdateWrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+
+    const nextUpdateLabel = document.createElement('span');
+    nextUpdateLabel.textContent = '次の更新:';
+
+    const nextUpdateValue = document.createElement('span');
+    nextUpdateValue.id = 'expo-adv-next-update-value';
+    Object.assign(nextUpdateValue.style, { fontWeight: 'bold' });
+    nextUpdateIndicator = nextUpdateValue;
+    updateNextUpdateDisplay();
+
+    nextUpdateWrap.append(nextUpdateLabel, nextUpdateValue);
+
+    wrap.append(btn, statusWrap, currentSlotWrap, nextUpdateWrap);
     document.documentElement.appendChild(wrap);
-  }
 
-  function addLogEntry(text) {
-    logBuffer.push({ time: new Date(), text });
-    while (logBuffer.length > LOG_MAX_LINES) {
-      logBuffer.shift();
-    }
-    if (logPanel) {
-      renderLogPanel();
-    }
-  }
-
-  function renderLogPanel() {
-    if (!logPanel) return;
-    logPanel.innerHTML = '';
-    for (const entry of logBuffer) {
-      const line = document.createElement('div');
-      line.textContent = `[${entry.time.toLocaleTimeString()}] ${entry.text}`;
-      logPanel.appendChild(line);
-    }
-  }
-
-  function openLogPanel() {
-    if (logPanel) return;
-    logPanel = document.createElement('div');
-    Object.assign(logPanel.style, {
-      position: 'fixed', top: '60px', left: '10px', zIndex: 999999,
-      width: '360px', maxHeight: '45vh', overflow: 'auto', background: '#fff',
-      border: '1px solid #999', borderRadius: '10px', padding: '8px',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.15)', fontSize: '12px'
-    });
-    document.documentElement.appendChild(logPanel);
-    renderLogPanel();
-  }
-
-  function closeLogPanel() {
-    if (!logPanel) return;
-    logPanel.remove();
-    logPanel = null;
-  }
-
-  function toggleLogPanel() {
-    if (logPanel) {
-      closeLogPanel();
-    } else {
-      openLogPanel();
+    if (!nextUpdateTimerId) {
+      nextUpdateTimerId = window.setInterval(updateNextUpdateDisplay, 200);
     }
   }
 
   /***** メインループ *****/
   function main() {
     ensureToggle();
-    openLogPanel();
     log('スクリプト起動');
     getServerDate().then((date) => {
       if (hasServerTime) {
