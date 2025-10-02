@@ -48,8 +48,8 @@
 
   // リロード許可ウィンドウ（サーバー時刻）
 
-  const WINDOW_START = 15; // >= 15s
-  const WINDOW_END = 25; // < 25s
+  const WINDOW_START = 11; // >= 11s
+  const WINDOW_END = 23; // < 23s
 
 
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）

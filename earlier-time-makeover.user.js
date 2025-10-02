@@ -51,8 +51,8 @@
 
   // リロード許可ウィンドウ（サーバー時刻）
 
-  const WINDOW_START = 15; // >= 15s
-  const WINDOW_END = 25; // < 25s
+  const WINDOW_START = 11; // >= 11s
+  const WINDOW_END = 23; // < 23s
 
   const MAX_RELOADS_PER_MINUTE = 4;
 
