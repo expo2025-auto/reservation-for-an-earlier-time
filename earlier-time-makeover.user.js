@@ -449,12 +449,52 @@
     return !!(rect.width && rect.height);
   }
 
+  function isElementEnabled(el) {
+    if (!el) return false;
+    if (el.disabled) return false;
+    if (el.getAttribute('aria-disabled') === 'true') return false;
+    if (el.hasAttribute('disabled')) return false;
+    if (el.dataset && el.dataset.disabled === 'true') return false;
+    return true;
+  }
+
+  function triggerButtonClick(button) {
+    if (!button) return;
+    try {
+      if (typeof button.focus === 'function') {
+        button.focus({ preventScroll: true });
+      }
+    } catch {
+      // ignore focus issues
+    }
+    if (typeof button.click === 'function') {
+      button.click();
+    }
+    const events = [
+      { type: 'pointerdown', init: { bubbles: true, cancelable: true, pointerType: 'mouse' }, pointer: true },
+      { type: 'mousedown', init: { bubbles: true, cancelable: true } },
+      { type: 'pointerup', init: { bubbles: true, cancelable: true, pointerType: 'mouse' }, pointer: true },
+      { type: 'mouseup', init: { bubbles: true, cancelable: true } },
+      { type: 'click', init: { bubbles: true, cancelable: true } },
+    ];
+    for (const evt of events) {
+      if (evt.pointer) {
+        if (typeof PointerEvent === 'function') {
+          button.dispatchEvent(new PointerEvent(evt.type, evt.init));
+        }
+        continue;
+      }
+      button.dispatchEvent(new MouseEvent(evt.type, evt.init));
+    }
+  }
+
   function findButtonByText(patterns, options = {}) {
-    const { requireVisible = false } = options;
+    const { requireVisible = false, requireEnabled = false } = options;
     const pats = Array.isArray(patterns) ? patterns : [patterns];
     const buttons = $$('button, [role="button"]');
     for (const b of buttons) {
       if (requireVisible && !isElementVisible(b)) continue;
+      if (requireEnabled && !isElementEnabled(b)) continue;
       const t = (b.innerText || b.textContent || '').trim();
       if (pats.some(p => (p instanceof RegExp ? p.test(t) : t.includes(p)))) return b;
     }
@@ -957,12 +997,15 @@
     log(`前倒し候補を選択: ${target.info.label} (${target.info.text})`);
     target.el.click();
 
-    const setBtn = await waitForButtonByText(SELECTORS.setVisitButtonText);
+    const setBtn = await waitForButtonByText(SELECTORS.setVisitButtonText, {
+      requireVisible: true,
+      requireEnabled: true,
+    });
     if (!setBtn) {
       log('「来場日時を設定する」ボタンが見つかりませんでした');
       return { status: 'error', checked: confirmedCurrentSlot };
     }
-    setBtn.click();
+    triggerButtonClick(setBtn);
     log('「来場日時を設定する」を押下');
 
     const confirmBtn = await waitForConfirmButton();
