@@ -841,7 +841,7 @@
         setCurrentSlotDisplay('', { fallback: '未検出' });
       }
       const now = Date.now();
-      if (now - lastActiveDetectionFailureLogTime > 15_000) {
+      if (now - lastActiveDetectionFailureLogTime > 25_000) {
         lastActiveDetectionFailureLogTime = now;
         log('現在の予約枠を特定できませんでした');
         const debugSummary = entries
