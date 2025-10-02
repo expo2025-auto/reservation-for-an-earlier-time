@@ -50,8 +50,10 @@
   const DISPLAY_SETTLE_POLL_INTERVAL_MS = 400;
 
   // リロード許可ウィンドウ（サーバー時刻）
-  const WINDOW_START = 23; // >= 23s
-  const WINDOW_END = 33; // < 33s
+
+  const WINDOW_START = 15; // >= 15s
+  const WINDOW_END = 25; // < 25s
+
   const MAX_RELOADS_PER_MINUTE = 4;
 
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）
