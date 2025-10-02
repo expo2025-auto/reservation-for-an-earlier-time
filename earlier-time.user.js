@@ -54,6 +54,7 @@
 
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）
   const MAX_ATTEMPTS_PER_MINUTE = 3;
+  const MAX_RELOADS_PER_MINUTE = 4;
   const ATTEMPT_STORAGE_KEY = 'expo_adv_attempt_info_v3';
   const RELOAD_STORAGE_KEY = 'expo_adv_reload_info_v1';
 
