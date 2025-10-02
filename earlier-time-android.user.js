@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Expo2025 予約繰り上げ（Android版）
 // @namespace    https://github.com/expo-automation/reservation-for-an-earlier-time
-// @version      1.0
+// @version      1.6
 // @description  Android端末向けにリロードの挙動を調整した Expo2025 予約繰り上げスクリプト。現在の予約時刻より早い空き枠を自動選択し、確認モーダルまで進めて変更を完了します。失敗トースト検出時は同分内4回までリトライ。
 // @downloadURL  https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time-android.user.js
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time-android.user.js
@@ -50,8 +50,10 @@
   const DISPLAY_SETTLE_POLL_INTERVAL_MS = 400;
 
   // リロード許可ウィンドウ（サーバー時刻）
+
   const WINDOW_START = 15; // >= 15s
   const WINDOW_END = 25; // < 25s
+
   const MAX_RELOADS_PER_MINUTE = 4;
 
   // 予約失敗時の復旧リロード 最大回数（秒に関係なく実施）
