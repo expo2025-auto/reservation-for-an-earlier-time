@@ -7,13 +7,143 @@
 // @updateURL    https://github.com/expo2025-auto/reservation-for-an-earlier-time/raw/refs/heads/main/earlier-time-makeover.user.js
 // @author       you
 // @match        https://ticket.expo2025.or.jp/*
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @connect      ticket.expo2025.or.jp
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // ===== Inject page-context guard at document-start (persist across pages) =====
+  (function __nr_installTopGuardPage() {
+    try {
+      function __nr_page_guard() {
+        try {
+          var ts = sessionStorage.getItem('__nr_blockTopUntil_ts');
+          window.__nr_blockTopUntil = ts ? +ts : 0;
+        } catch (e) {
+          window.__nr_blockTopUntil = 0;
+        }
+
+        var H = history;
+
+        function isTop(u) {
+          try {
+            var p = new URL(String(u || ''), location.href).pathname;
+            return p === '/';
+          } catch (_) {
+            var s = String(u || '');
+            if (s === '/' || s === location.origin + '/' || s === location.origin) return true;
+            return /^https?:\/\/ticket\.expo2025\.or\.jp(?:\/(?:[?#].*)?)?$/.test(s);
+          }
+        }
+
+        function makeGuardedPush(orig) {
+          var fn = function (state, title, url) {
+            if ((window.__nr_blockTopUntil || 0) > Date.now() && isTop(url)) {
+              try {
+                console.warn('[NR] blocked pushState("/") during reload window');
+              } catch (_e) {}
+              return;
+            }
+            return orig.apply(this, arguments);
+          };
+          try {
+            Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false });
+          } catch (_0) {
+            fn.__nrGuarded = true;
+          }
+          return fn;
+        }
+
+        function makeGuardedReplace(orig) {
+          var fn = function (state, title, url) {
+            if ((window.__nr_blockTopUntil || 0) > Date.now() && isTop(url)) {
+              try {
+                console.warn('[NR] blocked replaceState("/") during reload window');
+              } catch (_e2) {}
+              return;
+            }
+            return orig.apply(this, arguments);
+          };
+          try {
+            Object.defineProperty(fn, '__nrGuarded', { value: true, configurable: false });
+          } catch (_1) {
+            fn.__nrGuarded = true;
+          }
+          return fn;
+        }
+
+        function lockProp(obj, key, value) {
+          try {
+            Object.defineProperty(obj, key, { value: value, writable: false, configurable: false });
+          } catch (_2) {
+            try {
+              obj[key] = value;
+            } catch (_3) {}
+          }
+        }
+
+        function applyGuard(lock) {
+          var currentPush = H.pushState.bind(H);
+          var currentReplace = H.replaceState.bind(H);
+          var guardedPush = makeGuardedPush(currentPush);
+          var guardedReplace = makeGuardedReplace(currentReplace);
+          H.pushState = guardedPush;
+          H.replaceState = guardedReplace;
+          if (lock) {
+            lockProp(H, 'pushState', guardedPush);
+            lockProp(H, 'replaceState', guardedReplace);
+          }
+        }
+
+        var watchTimer = null;
+        function startWatch(durationMs) {
+          var stopAt = Date.now() + (durationMs || 15000);
+          if (watchTimer) clearInterval(watchTimer);
+          watchTimer = setInterval(function () {
+            var needReapply = !H.pushState.__nrGuarded || !H.replaceState.__nrGuarded;
+            var guardActive = (window.__nr_blockTopUntil || 0) > Date.now();
+            if (needReapply) {
+              applyGuard(true);
+              return;
+            }
+            if (!guardActive && Date.now() > stopAt) {
+              clearInterval(watchTimer);
+              watchTimer = null;
+            }
+          }, 60);
+        }
+
+        applyGuard(true);
+        startWatch(15000);
+
+        window.__nr_armTopGuard = function (ms) {
+          var until = Date.now() + (ms || 10000);
+          window.__nr_blockTopUntil = until;
+          try {
+            sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
+          } catch (_4) {}
+        };
+
+        window.__nr_reinforceHistoryGuard = function (ms) {
+          try {
+            applyGuard(true);
+          } catch (_5) {}
+          startWatch(ms || 10000);
+        };
+      }
+
+      var s = document.createElement('script');
+      s.textContent = '(' + __nr_page_guard.toString() + ')();';
+      (document.documentElement || document.head || document.body).appendChild(s);
+      if (s.parentNode) {
+        s.parentNode.removeChild(s);
+      }
+    } catch (e) {}
+  })();
+  // ===== End inject =====
 
   /***** 調整ポイント（サイト改修時はここを直す） *****/
   const SELECTORS = {
@@ -435,6 +565,22 @@
 
   function log(...args) {
     console.log('[ExpoAdvance]', ...args);
+  }
+
+  // ===== iOS top-guard window setter (userscript side) =====
+  function armTopGuard(ms = 100000) {
+    const until = Date.now() + ms;
+    try {
+      window.__nr_blockTopUntil = until;
+    } catch (_) {}
+    try {
+      sessionStorage.setItem('__nr_blockTopUntil_ts', String(until));
+    } catch (_) {}
+    try {
+      if (typeof window.__nr_reinforceHistoryGuard === 'function') {
+        window.__nr_reinforceHistoryGuard(ms);
+      }
+    } catch (_) {}
   }
 
   // :matches() 疑似を簡易サポート（innerTextでフィルタ）
@@ -1045,6 +1191,27 @@
     }
     location.replace(location.href);
   }
+
+  // ===== wrap reloadPage to arm the guard automatically =====
+  (function __nr_wrapReloadPage() {
+    try {
+      if (typeof reloadPage === 'function' && !reloadPage.__nrWrapped) {
+        const orig = reloadPage;
+        const wrapped = function (reason) {
+          try {
+            armTopGuard(100000);
+          } catch (_) {}
+          return orig.apply(this, arguments);
+        };
+        try {
+          Object.defineProperty(wrapped, '__nrWrapped', { value: true });
+        } catch (_) {
+          wrapped.__nrWrapped = true;
+        }
+        reloadPage = wrapped;
+      }
+    } catch (e) {}
+  })();
 
   async function tick() {
     if (ticking || pendingReload) return;
